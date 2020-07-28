@@ -1,0 +1,230 @@
+---
+title: "G01- Exploratory Data Analysis"
+author: "Vinayak B. Menon, Xinkai Zhou, Kamaldeep Kaur"
+date: "7/28/2020"
+output: pdf_document
+---
+
+```{r setup,include=FALSE,warning=FALSE}
+rm(list=ls())
+setwd("C:/Users/Vinayak/Desktop/Business Data Analytics/Project")
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(Information)
+library(woe)
+library(fuzzyjoin)
+library(scorecard)
+```
+\textbf{Problem Statement:}\
+CredX is a leading credit card provider that gets thousands of credit card applications every year. But in the past few years, it has experienced an increase in credit loss. The CEO believes that the best strategy to mitigate credit risk is to “acquire the right customers”.\
+
+ The aim of this report is to explore the past data of the bank applicants, i.e their credit history and demographic data, and determine primary factors that has an influence on their default status.\
+ 
+ 
+\textbf{Understanding the data:}\
+
+We will be working on two datasets i.e the Demographic data and the Credit Bureau data.
+```{r 1}
+#Accessing the two datasets
+credit <- read.csv("Credit_Bureau.csv",stringsAsFactors = TRUE)
+dem <- read.csv("demogs.csv",stringsAsFactors = TRUE)
+```
+
+We present below the summary statistics of the demographic data:
+```{r 1.1,echo=FALSE}
+summary(dem)
+```
+Now we present the summary statistics of the credit bureau data: 
+```{r 1.2,echo=FALSE,warnings=FALSE}
+summary(credit)
+attach(dem)
+attach(credit)
+```
+
+We can see that there are empty labels in a lot of the factor type data. We will replace this label with $NA$.
+```{r 1.3}
+levels(dem$Gender)[levels(dem$Gender)==""]<-"NA"
+levels(dem$Marital.Status..at.the.time.of.application.)[levels(dem$Marital.Status..at.the.time.of.application.)==""]<-"NA"
+levels(dem$Education)[levels(dem$Education)==""]<-"NA"
+levels(dem$Profession)[levels(dem$Profession)==""]<-"NA"
+levels(dem$Type.of.residence)[levels(dem$Type.of.residence)==""]<-"NA"
+```
+
+We now print any duplicate entries based on their Application.ID, and proceed to remove any such entries.
+```{r 1.4,warning=FALSE}
+#checking for duplicates
+dem %>%
+  group_by(Application.ID)%>%
+  filter(n()>1)
+
+credit %>%
+  group_by(Application.ID)%>%
+  filter(n()>1)
+
+#selecting only unique ID's
+dem <- dem %>%
+  group_by(Application.ID)%>%
+  filter(n()==1)
+
+credit <-  credit %>%
+  group_by(Application.ID)%>%
+  filter(n()==1)
+```
+
+We proceed to merge the two datasets, as we can operate on it in one go from now.
+```{r 1.11}
+#Mergimg the datasets
+merged_data <- merge(dem,credit,by=c("Application.ID"))
+#removing performance variable obtained from dem. Performance.Tag.y is from credit. Same result
+merged_data <- merged_data[,-12]
+```
+It will be useful to check the clas of our independent and dependent variables, making sure that the dependent variable is not a factor, while the independent variables are either factors or numeric.
+```{r 1.12}
+#checking if categorical independent variables are factors
+#also checking if dependent categorical variable is integer (not factor)
+#both of these are done to use the woe and IV functions effectively
+#dem_class contains the type of data of each coloumns
+merged_data_class <- data.frame(colnames(merged_data))
+colnames(merged_data_class) <- "Variable"
+for (i in 1:ncol(dem)) {
+  merged_data_class$Class[i] <- class(merged_data[,i])
+}
+merged_data_class 
+```
+
+It is also important to remove any entries with no target entry. This step is required for the WOE calculations in the next section.
+```{r 7}
+#checking for NA in Performance.Tag i.e dependent categorical variable
+#missing values in dependent variable cannot be practically solved
+#thus we resort to removing them from the dataset
+merged_data$Performance.Tag.y %>%
+  is.na()%>%
+  sum()
+
+merged_data<- merged_data %>%
+  filter(!is.na(Performance.Tag.y))
+```
+
+\
+\
+\textbf{Data Cleaning and Preparation:}\
+
+ As we can see from above, there are a number of unavailable entries ($NA$) and outlier values within the data. We will replace these values with the respective WOE values, indicating a relationship with the respective target value. For this, we make use of the $scorecard$ package:
+
+```{r 2.1,warning=FALSE}
+#computing IV and WOE
+bins <- woebin(merged_data[,-1],"Performance.Tag.y")
+bins$Gender
+```
+ As an example, we have printed the resulting statistics for the Gender variable. The function has binned $NA$ and $Female$ categories as one bin (most likely due to similar WOE values) and $Male$ as a seperate bin. The $WOE$ coloumn shows their relationship score with the target variable $Performance.Tag$ along with the IV value that indicates the strength of this relationship. Note that the $total_iv$ is representative of the relationship strength for the whole variable.\
+ We will now create the woe_data by replacing the merged_data dataset with the respective woe values. We also present the summary statistics of the woe_data:
+```{r 2.2}
+#woe data
+woe_data<-woebin_ply(merged_data[,-1],bins)
+#changing dependent coloumn
+woe_data$Performance.Tag <- woe_data$Performance.Tag.y
+#merging application id data
+colnames(woe_data)[1]<-"Application.ID"
+woe_data$Application.ID <- merged_data$Application.ID
+#writing file 
+write.csv(woe_data,file="woe_data.csv")
+#summary
+summary(woe_data)
+```
+
+Now we print the IV values of the independent variables in descending order, to remove those variables with a weak relationship with the dependent variable:
+```{r 10}
+#obtaining all the IV values from bins
+IV_temp <- round(c(bins$Age$total_iv[1],bins$Gender$total_iv[1],
+                   bins$Marital.Status..at.the.time.of.application.$total_iv[1],
+      bins$No.of.dependents$total_iv[1],bins$Income$total_iv[1],bins$Education$total_iv[1],
+      bins$Profession$total_iv[1],bins$Type.of.residence$total_iv[1],bins$No.of.months.in.current.residence$total_iv[1],
+              bins$No.of.months.in.current.company$total_iv[1],bins$No.of.times.90.DPD.or.worse.in.last.6.months$total_iv[1],bins$No.of.times.60.DPD.or.worse.in.last.6.months$total_iv[1],
+              bins$No.of.times.30.DPD.or.worse.in.last.6.months$total_iv[1],bins$No.of.times.90.DPD.or.worse.in.last.12.months$total_iv[1],bins$No.of.times.60.DPD.or.worse.in.last.12.months$total_iv[1],
+              bins$No.of.times.30.DPD.or.worse.in.last.12.months$total_iv[1],bins$Avgas.CC.Utilization.in.last.12.months$total_iv[1],bins$No.of.trades.opened.in.last.6.months$total_iv[1],
+              bins$No.of.trades.opened.in.last.12.months$total_iv[1],bins$No.of.PL.trades.opened.in.last.6.months$total_iv[1],bins$No.of.PL.trades.opened.in.last.12.months$total_iv[1],
+              bins$No.of.Inquiries.in.last.6.months..excluding.home...auto.loans.$total_iv[1],bins$No.of.Inquiries.in.last.12.months..excluding.home...auto.loans.$total_iv[1],bins$Presence.of.open.home.loan$total_iv[1],
+              bins$Outstanding.Balance$total_iv[1],bins$Total.No.of.Trades$total_iv[1],bins$Presence.of.open.auto.loan$total_iv[1]),2)
+
+#creating a table of IV values
+IV<- data.frame("Variable"=colnames(merged_data)[-c(1,ncol(merged_data))],
+                "IV"=IV_temp)
+IV$Variable<-as.character(IV$Variable)
+IV_desc <- IV[order(-IV$IV),]
+IV_cut <- subset(IV_desc,IV_desc$IV>0.1)
+rownames(IV_cut)<-1:nrow(IV_cut)
+print(IV_desc)
+```
+
+The independent variables that hold a medium level of predictive power to the target variable, $Performance.Tag$ is:
+```{r 2.222}
+print(IV_cut)
+```
+ We will now plot the count distribution of the variables that show a relatively strong level of predictive power, along with a line plot of their WOE values:
+```{r p1,warning=FALSE}
+par(mfrow=c(2,2))
+woebin_plot(bins[IV_cut$Variable],show_iv = F,line_value = c("woe"))
+```
+
+We further include plots describing the probability of bad customers for each independent variable in each category:
+```{r PLOT}
+ggplot(bins$Avgas.CC.Utilization.in.last.12.months,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+ labs(title = "Bad probability for Avgas.CC.Utilization.in.last.12.months")
+
+ggplot(bins$No.of.PL.trades.opened.in.last.12.months,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for No.of.PL.trades.opened.in.last.12.months")
+
+
+ggplot(bins$No.of.trades.opened.in.last.12.months,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for No.of.trades.opened.in.last.12.months")
+
+
+ggplot(bins$No.of.Inquiries.in.last.12.months..excluding.home...auto.loans.,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for No.of.Inquiries.in.last.12.months..excluding.home...auto.loans.")
+
+
+ggplot(bins$No.of.times.30.DPD.or.worse.in.last.6.months,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for No.of.times.30.DPD.or.worse.in.last.6.months")
+
+
+ggplot(bins$Outstanding.Balance,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for Outstanding.Balance")
+
+
+ggplot(bins$Total.No.of.Trades,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for Total.No.of.Trades")
+
+
+ggplot(bins$No.of.times.30.DPD.or.worse.in.last.12.months,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for No.of.times.30.DPD.or.worse.in.last.12.months")
+
+
+ggplot(bins$No.of.PL.trades.opened.in.last.6.months,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for No.of.PL.trades.opened.in.last.6.months")
+
+
+ggplot(bins$No.of.times.60.DPD.or.worse.in.last.6.months,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for No.of.times.60.DPD.or.worse.in.last.6.months")
+
+
+ggplot(bins$No.of.times.90.DPD.or.worse.in.last.12.months,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for No.of.times.90.DPD.or.worse.in.last.12.months")
+
+
+ggplot(bins$No.of.times.60.DPD.or.worse.in.last.12.months,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for No.of.times.60.DPD.or.worse.in.last.12.months")
+
+
+ggplot(bins$No.of.Inquiries.in.last.6.months..excluding.home...auto.loans.,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for No.of.Inquiries.in.last.6.months..excluding.home...auto.loans.")
+
+
+ggplot(bins$No.of.trades.opened.in.last.6.months,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "No.of.trades.opened.in.last.6.months")
+
+
+ggplot(bins$No.of.times.90.DPD.or.worse.in.last.6.months,aes(x=bin,y=badprob))+
+  geom_bar(stat="identity")+labs(title = "Bad probability for No.of.times.90.DPD.or.worse.in.last.6.months")
+
+```
